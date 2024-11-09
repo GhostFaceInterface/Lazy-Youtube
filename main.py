@@ -5,16 +5,27 @@ from selenium import webdriver
 from selenium.webdriver.common.action_chains import ActionChains
 import time
 import math
+import json
+from selenium.webdriver.chrome.service import Service
+import platform
+#json dosyasından veri okuma
+with open('config.json','r') as config_file:
+    config = json.load(config_file)
+
 
 # Mediapipe ve OpenCV ile el hareketlerini algılama
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
+system_platform = platform.system() # İşletim sistemi türünü al
+
 # WebDriver ayarları (Brave kontrolü için)
 options = webdriver.ChromeOptions()
-options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-driver = webdriver.Chrome(options=options)  # Brave tarayıcısının yolu belirtiliyor
-
+options.binary_location = config['brave_browser_path']# mac için budur'/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+if system_platform == 'Darwin':
+    driver = webdriver.Chrome(options=options)  # Brave tarayıcısının yolu belirtiliyor
+else:
+    driver = webdriver.Chrome(service=Service(config['chromedriver_path']), options=options)
 def setup_browser():
     driver.get('https://www.youtube.com')
     time.sleep(5)  # Sayfa yüklenirken beklemek için

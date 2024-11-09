@@ -13,3 +13,6 @@ __pycache__/
 
 # macOS metadata
 .DS_Store
+
+# PyCharm files
+config.json
