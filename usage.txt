@@ -11,10 +11,9 @@ env\Scripts\activate komutunu çalıştırın.
 sanal ortam oluşturulduktan sonra bağımlılıkları indirmek için :
 pip install -r requirements.txt
 
+bundan sonra 
+
 bağımlılıklar indirildikten sonra main.py değil watchdog_runner.py scripti çalıştırılmalı.
 yani python wachdog_runner.py komutunu çalıştırın.
 
-çalıştırdıktan sonra mutlaka hata alacaksınız. Olası hatalar : 
-1- chromedriver konumu : mac bilgisayarda chromedriver çağırmak için bir konum belirtmeme gerek yok. chromedrivernerede yüklü ise onu bulur ve getirir. 
-windows için bu süreç nasıl işler bilmiyorum ona bakmak gerekiyor. chromedriver konumu bulunamadı vs gibi hatalar alıyorsanız 
 
