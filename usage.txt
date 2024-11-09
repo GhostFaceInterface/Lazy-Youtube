@@ -11,9 +11,17 @@ env\Scripts\activate komutunu çalıştırın.
 sanal ortam oluşturulduktan sonra bağımlılıkları indirmek için :
 pip install -r requirements.txt
 
-bundan sonra 
+bundan sonra config.json dosyasına gidip driver'ınızın path'ini oraya tanımlamanız gerekiyor. 
+brave_browser_path
+chromedriver_path 
+bu iki değeri sizin değiştirmeniz gerekiyor. Windows için ne ise onu yazın. Olası bir sorunda bana ulaşın.
 
-bağımlılıklar indirildikten sonra main.py değil watchdog_runner.py scripti çalıştırılmalı.
-yani python wachdog_runner.py komutunu çalıştırın.
+bağımlılıklar indirildikten sonra main.py değil watchdog_runner.py scripti çalıştırılmalı. Yani : 
+python wachdog_runner.py 
+komutunu çalıştırın.
 
+sizden bazı izinler isteyecektir. Gerekli tüm izinleri verin. 
+Onun dışında tarayıcı açıldıktan birkaç saniye sonra aniden kapandığı durumlar olabilir. 
+Script'in kameraya erişmeye çalıştığı ve eerişemediği için programın otomatik olarak sonlanmasından kaynaklanıyor. 
+Bundan dolayı kameraya gerekli izinleri verdiğinizden emin olun. 
 
