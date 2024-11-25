@@ -76,16 +76,22 @@ with mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.5) as hands:
         # El hareketlerini tespit et
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                # Yeni bir hareket: Thumbs Up işareti (Baş parmak yukarıda ve diğer parmaklar kapalı)
+                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+                # Yeni bir hareket: Thumbs Up ve Thumbs Down işareti
                 thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
                 index_mcp = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP]
+                pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
 
                 thumb_coords = np.array([thumb_tip.x * image.shape[1], thumb_tip.y * image.shape[0]])
                 index_coords = np.array([index_mcp.x * image.shape[1], index_mcp.y * image.shape[0]])
+                pinky_coords = np.array([pinky_tip.x * image.shape[1], pinky_tip.y * image.shape[0]])
+
                 distance_thumb_index = np.linalg.norm(thumb_coords - index_coords)
+                distance_thumb_pinky = np.linalg.norm(thumb_coords - pinky_coords)
 
                 # Like durumu kontrolü (Thumbs Up hareketi)
-                if distance_thumb_index < 40 and not is_like_triggered:
+                if distance_thumb_index < 40 and distance_thumb_pinky > 60 and not is_like_triggered:
                     try:
                         like_button = driver.find_element('css selector', 'button[title="I like this"]')
                         if like_button.get_attribute('aria-pressed') == 'false':
@@ -103,11 +109,7 @@ with mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.5) as hands:
                     is_like_triggered = False
 
                 # Dislike durumu kontrolü (Thumbs Down hareketi)
-                pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
-                pinky_coords = np.array([pinky_tip.x * image.shape[1], pinky_tip.y * image.shape[0]])
-                distance_thumb_pinky = np.linalg.norm(thumb_coords - pinky_coords)
-
-                if distance_thumb_pinky < 40 and not is_dislike_triggered:
+                if distance_thumb_pinky < 40 and distance_thumb_index > 60 and not is_dislike_triggered:
                     try:
                         dislike_button = driver.find_element('css selector', 'button[title="I dislike this"]')
                         if dislike_button.get_attribute('aria-pressed') == 'false':
@@ -124,17 +126,7 @@ with mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.5) as hands:
                 if distance_thumb_pinky > 60:
                     is_dislike_triggered = False
 
-                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-
                 # Yeni bir hareket: Baş parmak ve küçük parmağı birleştirme ("Pinky Touch" işareti)
-                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
-
-                thumb_coords = np.array([thumb_tip.x * image.shape[1], thumb_tip.y * image.shape[0]])
-                pinky_coords = np.array([pinky_tip.x * image.shape[1], pinky_tip.y * image.shape[0]])
-                distance_thumb_pinky = np.linalg.norm(thumb_coords - pinky_coords)
-
-                # Eğer baş parmak ve küçük parmak birleştirilmişse ve durdur/oynat henüz tetiklenmemişse
                 if distance_thumb_pinky < 40 and not is_play_pause_triggered:
                     try:
                         play_pause_button = driver.find_element('css selector', '.ytp-play-button')
