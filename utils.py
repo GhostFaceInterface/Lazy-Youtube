@@ -138,20 +138,17 @@ def pre_process_landmark(landmark_list):
 
     # relative coordinates to wrist (think of it as:
     # where are the points with reference to the wrist?)
-   # Relative coordinates to wrist
     wrist_coordinates = coordinates[0]
     relatives = coordinates - wrist_coordinates
 
-    # Flatten and normalize
+    # Convert to 1D array
     flattened = relatives.flatten()
+
+    # Normalize between (-1, 1) and exclude wrist coordinates(always 0)
     max_value = np.abs(flattened).max()
-
-    if max_value == 0:
-        return np.zeros(13)  # Eğer max_value sıfırsa boş bir vektör döndür
-    normalized = flattened / max_value
-
-    # İlk 13 özelliği döndür
-    return normalized[:13]
+    normalized = flattened[2:]/max_value
+    
+    return normalized
 
 
  
@@ -274,21 +271,3 @@ def eye_aspect_ratio(eye):
 	# compute the eye aspect ratio
     ear = (A + B) / (2.0 * C)
     return ear
-
-def get_gesture_name(class_id):
-    """Sınıf numarasına göre hareketin adını döndürür."""
-    gestures = {
-        1: "Play_Pause",
-        2: "FullScreen",
-        3: "Vol_down_gen",
-        4: "Vol_up_gen",
-        5: "Vol_down_ytb",
-        6: "Vol_up_ytb",
-        7: "Forward",
-        8: "Backward",
-        9: "Move_mouse",
-        10: "Left_click",
-        11: "Right_click",
-        12: "Neutral"
-    }
-    return gestures.get(class_id, "Unknown Gesture")
