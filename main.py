@@ -203,17 +203,17 @@ def handle_gesture(driver, gesture):
         return  # Harekete izin verilmez
 
     LAST_GESTURE_TIME = current_time  # Son hareketin zamanını güncelle
-
+    volume_sensitivity=0.05
     try:
         if gesture == "Play_Pause":
             # Oynat/Duraklat işlemi
             driver.find_element("css selector", "button.ytp-play-button").click()
         elif gesture == "Vol_up_ytb":
             # Increase volume
-            driver.find_element("css selector", "video").send_keys(Keys.ARROW_UP)
+           driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
         elif gesture == "Vol_down_ytb":
             # Decrease volume
-            driver.find_element("css selector", "video").send_keys(Keys.ARROW_DOWN)
+            driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
         elif gesture == "fullscreen":
             # Tam ekran geçişi yap
             driver.find_element("css selector", "button.ytp-fullscreen-button").click()
