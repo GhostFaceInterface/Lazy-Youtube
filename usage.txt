@@ -25,3 +25,4 @@ Onun dışında tarayıcı açıldıktan birkaç saniye sonra aniden kapandığ�
 Script'in kameraya erişmeye çalıştığı ve eerişemediği için programın otomatik olarak sonlanmasından kaynaklanıyor. 
 Bundan dolayı kameraya gerekli izinleri verdiğinizden emin olun. 
 
+

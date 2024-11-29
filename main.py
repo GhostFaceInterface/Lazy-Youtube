@@ -1,186 +1,236 @@
-import cv2
+from collections import deque
 import mediapipe as mp
 import numpy as np
+import torch
+import pandas as pd
+import cv2 as cv
 from selenium import webdriver
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
+# Model and utility imports
+from models.model_architecture import model
+from utils import *
 import time
-import math
+# Global constants and configurations
+WIDTH, HEIGHT = 1028 // 2, 720 // 2
+CSV_PATH = 'data/gestures.csv'
+GESTURE_RECOGNIZER_PATH = 'models/model.pth'
+LABEL_PATH = 'data/label.csv'
+CONF_THRESH = 0.9
+TRAINING_KEYPOINTS = [keypoint for keypoint in range(0, 21, 4)]
+SMOOTH_FACTOR = 6
+ABSENCE_COUNTER_THRESH = 20
+
+# State variables
+PLOCX, PLOCY = 0, 0
+CLOX, CLOXY = 0, 0
+GEN_COUNTER = 0
+GESTURE_HISTORY = deque([])
+ABSENCE_COUNTER = 0
+IS_ABSENT = None  # Placeholder for video status
+
+# Initialize Mediapipe and other components
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.75)
+mp_drawing = mp.solutions.drawing_utils
+mp_face_detection = mp.solutions.face_detection
+face_detection = mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.75)
+
+##################################################BU KISIM TARAYICI AYARLARIDIR###############################
 import platform
 import json
-import undetected_chromedriver as uc
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 
-# Mediapipe ve OpenCV ile el hareketlerini algılama
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-
-# WebDriver ayarları (Brave kontrolü için)
-options = webdriver.ChromeOptions()
-options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-
-# Sisteme göre Brave tarayıcısının yolunu belirleyin
-system_platform = platform.system()
-
-# JSON dosyasını yükleyin
-with open('config.json', 'r') as config_file:
-    config = json.load(config_file)
-
-try:
-    if system_platform == 'Darwin':
-        driver = uc.Chrome(options=options)
-    elif system_platform == 'Windows':
-        driver = uc.Chrome(service=Service(config['chromedriver_path']), options=options)
-    else:
-        print('Bu sistem desteklenmiyor.')
-        exit()
-    print('Brave tarayıcısı başarıyla başlatıldı.')
-except Exception as e:
-    print(f'Tarayıcı başlatılamadı: {e}')
-    exit()
-
-def setup_browser():
+def load_config(file_path):
+    """
+    JSON dosyasını yükler ve içeriğini döndürür.
+    """
     try:
-        driver.get('https://www.youtube.com')
-        time.sleep(5)  # Sayfa yüklenirken beklemek için
-        print('YouTube başarıyla açıldı.')
-    except Exception as e:
-        print(f'YouTube açılamadı: {e}')
+        with open(file_path, 'r') as config_file:
+            config = json.load(config_file)
+        print("Config dosyası başarıyla yüklendi.")
+        return config
+    except FileNotFoundError:
+        print(f"Hata: {file_path} dosyası bulunamadı.")
+        exit()
+    except json.JSONDecodeError as e:
+        print(f"JSON dosyası yüklenirken hata oluştu: {e}")
         exit()
 
-cap = cv2.VideoCapture(0)
+def configure_chrome_options():
+    """
+    İşletim sistemine göre Chrome tarayıcı seçeneklerini yapılandırır.
+    """
+    system_platform = platform.system()
+    options = webdriver.ChromeOptions()
 
-with mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.5) as hands:
-    setup_browser()
-    is_play_pause_triggered = False
-    is_like_triggered = False
-    is_dislike_triggered = False
-    prev_angle = None
-    volume_control_last_triggered = 0
-    volume_sensitivity = 0.05  # Ses değişim hassasiyeti
+    if system_platform == 'Darwin':  # macOS
+        options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    elif system_platform == 'Windows':  # Windows
+        options.binary_location = "C:\\Users\\alibu\\Downloads\\chrome-win64\\chrome-win64\\chrome.exe"
+    else:
+        print("Bu sistem desteklenmiyor.")
+        exit()
 
-    while cap.isOpened():
-        success, frame = cap.read()
-        if not success:
-            print('Web kamerasından görüntü alınamadı.')
+    print(f"{system_platform} için Chrome seçenekleri başarıyla yapılandırıldı.")
+    return options
+
+def start_browser(config, options):
+    """
+    WebDriver hizmetini başlatır ve Chrome tarayıcısını döndürür.
+    """
+    try:
+        service = Service(config['chromedriver_path'])  # Chromedriver yolunu config.json'dan alıyoruz
+        driver = webdriver.Chrome(service=service, options=options)  
+        print('Google Chrome başarıyla başlatıldı.')
+        return driver
+    except Exception as e:
+        print(f'Tarayıcı başlatılamadı: {e}')
+        exit()
+
+def open_url(driver, url):
+    """
+    Verilen URL'yi açar.
+    """
+    try:
+        driver.get(url)
+        time.sleep(5)  # Sayfa yüklenirken beklemek için
+        print(f'{url} başarıyla açıldı.')
+    except Exception as e:
+        print(f'{url} açılamadı: {e}')
+        exit()
+
+
+##############################################################################################################
+# Load the model and labels
+def load_model_and_labels():
+    model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
+    labels = pd.read_csv(LABEL_PATH, header=None).values.flatten().tolist()
+    return labels
+
+labels = load_model_and_labels()
+
+# Setup video capture
+def setup_camera():
+    cap = cv.VideoCapture(0)
+    cap.set(cv.CAP_PROP_FRAME_WIDTH, WIDTH)
+    cap.set(cv.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+    return cap
+
+# Process hand landmarks
+def process_hand_landmarks(frame_rgb, frame, mode, class_id,driver):
+    results = hands.process(frame_rgb)
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            coordinates_list = calc_landmark_coordinates(frame_rgb, hand_landmarks)
+            important_points = [coordinates_list[i] for i in TRAINING_KEYPOINTS]
+
+            preprocessed = pre_process_landmark(important_points)
+            d0 = calc_distance(coordinates_list[0], coordinates_list[5])
+            pts_for_distances = [coordinates_list[i] for i in [4, 8, 12]]
+            distances = normalize_distances(d0, get_all_distances(pts_for_distances))
+
+            features = np.concatenate([preprocessed, distances])
+            draw_info(frame, mode, class_id)
+            logging_csv(class_id, mode, features, CSV_PATH)
+
+            conf, pred = predict(features, model)
+            gesture = labels[pred]
+            if conf > CONF_THRESH:
+                handle_gesture(driver, gesture)
+                cv.putText(frame, f"Gesture: {gesture} ({conf:.2f})",
+                           (10, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+# Display and update the frame
+def display_frame(cap,driver,mode):
+    while True:
+        key = cv.waitKey(1)
+        if key == ord('q'):
             break
 
-        # BGR'yi RGB'ye dönüştür
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image.flags.writeable = False
-        results = hands.process(image)
-        image.flags.writeable = True
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        current_time = time.time()
-
-        # El hareketlerini tespit et
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                # Yeni bir hareket: Thumbs Up işareti (Baş parmak yukarıda ve diğer parmaklar kapalı)
-                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                index_mcp = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP]
-
-                thumb_coords = np.array([thumb_tip.x * image.shape[1], thumb_tip.y * image.shape[0]])
-                index_coords = np.array([index_mcp.x * image.shape[1], index_mcp.y * image.shape[0]])
-                distance_thumb_index = np.linalg.norm(thumb_coords - index_coords)
-
-                # Like durumu kontrolü (Thumbs Up hareketi)
-                if distance_thumb_index < 40 and not is_like_triggered:
-                    try:
-                        like_button = driver.find_element('css selector', 'button[title="I like this"]')
-                        if like_button.get_attribute('aria-pressed') == 'false':
-                            like_button.click()
-                            print('Videoya like atıldı.')
-                        else:
-                            like_button.click()
-                            print('Videodan like kaldırıldı.')
-                        is_like_triggered = True
-                    except Exception as e:
-                        print(f'Like düğmesi bulunamadı: {e}')
-
-                # Like tetiklemesi sıfırlama
-                if distance_thumb_index > 60:
-                    is_like_triggered = False
-
-                # Dislike durumu kontrolü (Thumbs Down hareketi)
-                pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
-                pinky_coords = np.array([pinky_tip.x * image.shape[1], pinky_tip.y * image.shape[0]])
-                distance_thumb_pinky = np.linalg.norm(thumb_coords - pinky_coords)
-
-                if distance_thumb_pinky < 40 and not is_dislike_triggered:
-                    try:
-                        dislike_button = driver.find_element('css selector', 'button[title="I dislike this"]')
-                        if dislike_button.get_attribute('aria-pressed') == 'false':
-                            dislike_button.click()
-                            print('Videoya dislike atıldı.')
-                        else:
-                            dislike_button.click()
-                            print('Videodan dislike kaldırıldı.')
-                        is_dislike_triggered = True
-                    except Exception as e:
-                        print(f'Dislike düğmesi bulunamadı: {e}')
-
-                # Dislike tetiklemesi sıfırlama
-                if distance_thumb_pinky > 60:
-                    is_dislike_triggered = False
-
-                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-
-                # Yeni bir hareket: Baş parmak ve küçük parmağı birleştirme ("Pinky Touch" işareti)
-                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
-
-                thumb_coords = np.array([thumb_tip.x * image.shape[1], thumb_tip.y * image.shape[0]])
-                pinky_coords = np.array([pinky_tip.x * image.shape[1], pinky_tip.y * image.shape[0]])
-                distance_thumb_pinky = np.linalg.norm(thumb_coords - pinky_coords)
-
-                # Eğer baş parmak ve küçük parmak birleştirilmişse ve durdur/oynat henüz tetiklenmemişse
-                if distance_thumb_pinky < 40 and not is_play_pause_triggered:
-                    try:
-                        play_pause_button = driver.find_element('css selector', '.ytp-play-button')
-                        print('Oynat/Duraklat düğmesi bulundu.')
-                        play_pause_button.click()
-                        is_play_pause_triggered = True
-                    except Exception as e:
-                        print(f"Oynat/Duraklat düğmesi bulunamadı: {e}")
-
-                # Eğer baş parmak ve küçük parmak tekrar açılmışsa tetiklemeyi sıfırla
-                if distance_thumb_pinky > 60:
-                    is_play_pause_triggered = False
-
-                # Ses artırma/azaltma hareketi (İşaret parmağıyla daire çizme)
-                index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-                index_finger_mcp = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP]
-                index_tip_coords = np.array([index_finger_tip.x * image.shape[1], index_finger_tip.y * image.shape[0]])
-                index_mcp_coords = np.array([index_finger_mcp.x * image.shape[1], index_finger_mcp.y * image.shape[0]])
-
-                # İşaret parmağının hareket yönünü analiz ederek daire çizme hareketini kontrol etme
-                if prev_angle is not None:
-                    angle = math.atan2(index_tip_coords[1] - index_mcp_coords[1], index_tip_coords[0] - index_mcp_coords[0])
-                    angle_diff = (angle - prev_angle) * 180.0 / math.pi
-
-                    if abs(angle_diff) > 10:
-                        try:
-                            # Ses artırma veya azaltma
-                            if angle_diff > 0:
-                                driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
-                                print('Ses artırma işlemi başarılı.')
-                            elif angle_diff < 0:
-                                driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
-                                print('Ses azaltma işlemi başarılı.')
-                            volume_control_last_triggered = current_time
-                        except Exception as e:
-                            print(f"Ses kontrol işlemi başarısız: {e}")
-
-                    prev_angle = angle
-                else:
-                    prev_angle = math.atan2(index_tip_coords[1] - index_mcp_coords[1], index_tip_coords[0] - index_mcp_coords[0])
-
-        cv2.imshow('Lazy YouTube Controller', image)
-
-        if cv2.waitKey(5) & 0xFF == ord('q'):
+        mode = select_mode(key, mode=mode)
+        class_id = get_class_id(key)
+        has_frame, frame = cap.read()
+        if not has_frame:
             break
 
-cap.release()
-driver.quit()
-cv2.destroyAllWindows()
+        frame = cv.flip(frame, 1)
+        frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        process_hand_landmarks(frame_rgb, frame, mode, class_id, driver)
+        cv.imshow("Hand Gesture Recognition", frame)
+
+# Main function
+def main():
+    # Tarayıcı ayarları ve YouTube açılışı
+    try:
+        print("Tarayıcı ayarları başlatılıyor...")
+        config_path = 'config.json'
+        config = load_config(config_path)
+        options = configure_chrome_options()
+        driver = start_browser(config, options)
+        open_url(driver, 'https://www.youtube.com')
+    except Exception as e:
+        print(f"Tarayıcı işlemleri sırasında hata oluştu: {e}")
+    
+    # Kamera kurulumu ve video işleme
+    try:
+        print("Kamera kurulumu başlatılıyor...")
+        cap = setup_camera()
+        print("Video akışı başlatılıyor...")
+        display_frame(cap,driver,mode=0)
+    except Exception as e:
+        print(f"Kamera veya video işleme sırasında hata oluştu: {e}")
+    finally:
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        cv.destroyAllWindows()
+        print("Tüm işlemler tamamlandı ve kaynaklar serbest bırakıldı.")
+
+########################################Youtube Kontrol########################################################################
+
+LAST_GESTURE_TIME = 0
+GESTURE_DELAY = 1.0  # 1 saniye tampon süresi
+
+def handle_gesture(driver, gesture):
+    global LAST_GESTURE_TIME
+
+    current_time = time.time()  # Geçerli zaman
+    # Eğer son hareketle geçen süre tampon süresinden kısa ise, işlem yapılmaz
+    if current_time - LAST_GESTURE_TIME < GESTURE_DELAY:
+        return  # Harekete izin verilmez
+
+    LAST_GESTURE_TIME = current_time  # Son hareketin zamanını güncelle
+
+    try:
+        if gesture == "Play_Pause":
+            # Oynat/Duraklat işlemi
+            driver.find_element("css selector", "button.ytp-play-button").click()
+        elif gesture == "Vol_up_ytb":
+            # Increase volume
+            driver.find_element("css selector", "video").send_keys(Keys.ARROW_UP)
+        elif gesture == "Vol_down_ytb":
+            # Decrease volume
+            driver.find_element("css selector", "video").send_keys(Keys.ARROW_DOWN)
+        elif gesture == "fullscreen":
+            # Tam ekran geçişi yap
+            driver.find_element("css selector", "button.ytp-fullscreen-button").click()
+        elif gesture == "Forward":
+            # Videoyu ileri sar
+            driver.execute_script("document.querySelector('video').currentTime += 10")
+        elif gesture == "Backward":
+            # Videoyu geri sar
+            driver.execute_script("document.querySelector('video').currentTime -= 10")
+        #elif gesture == "Cap_Subt":
+            # Altyazıları aç/kapat
+           # driver.find_element("css selector", "button.ytp-subtitles-button").click()
+        else:
+            print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
+    except Exception as e:
+        print(f"Gesture işleminde hata: {e}")
+
+
+if __name__ == "__main__":
+    main()
