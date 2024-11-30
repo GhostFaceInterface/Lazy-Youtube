@@ -7,12 +7,16 @@ import cv2 as cv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from pynput.mouse import Controller, Button
 # Model and utility imports
 from models.model_architecture import model
 from utils import *
 import time
 # Global constants and configurations
-WIDTH, HEIGHT = 1028 // 2, 720 // 2
+WIDTH, HEIGHT = 1028, 720
 CSV_PATH = 'data/gestures.csv'
 GESTURE_RECOGNIZER_PATH = 'models/model.pth'
 LABEL_PATH = 'data/label.csv'
@@ -146,7 +150,10 @@ def process_hand_landmarks(frame_rgb, frame, mode, class_id,driver):
 
 # Display and update the frame
 def display_frame(cap,driver,mode):
+    global frame
+    global frame_rgb 
     while True:
+        
         key = cv.waitKey(1)
         if key == ord('q'):
             break
@@ -156,9 +163,10 @@ def display_frame(cap,driver,mode):
         has_frame, frame = cap.read()
         if not has_frame:
             break
-
+        
+        
         frame = cv.flip(frame, 1)
-        frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        frame_rgb= cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         process_hand_landmarks(frame_rgb, frame, mode, class_id, driver)
         cv.imshow("Hand Gesture Recognition", frame)
 
@@ -190,30 +198,101 @@ def main():
         print("Tüm işlemler tamamlandı ve kaynaklar serbest bırakıldı.")
 
 ########################################Youtube Kontrol########################################################################
+import pyautogui
+
+# Ekran boyutunu al
+SCREEN_WIDTH, SCREEN_HEIGHT = pyautogui.size()
+
+def move_mouse_with_coordinates(frame_rgb):
+    global PLOCX, PLOCY
+    results = hands.process(frame_rgb)
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            coordinates_list = calc_landmark_coordinates(frame_rgb, hand_landmarks)
+            important_points = [coordinates_list[i] for i in TRAINING_KEYPOINTS]
+
+            preprocessed = pre_process_landmark(important_points)
+            d0 = calc_distance(coordinates_list[0], coordinates_list[5])
+            pts_for_distances = [coordinates_list[i] for i in [4, 8, 12]]
+            distances = normalize_distances(d0, get_all_distances(pts_for_distances))
+
+            features = np.concatenate([preprocessed, distances])
+       
+    # El koordinatlarını hesapla
+
+    # Orta parmak ucu için normalize edilmiş koordinatları al
+    x_norm, y_norm = coordinates_list[9]  # Orta parmak ucu
+    x_norm, y_norm = x_norm / WIDTH, y_norm / HEIGHT  # Çerçeveye göre normalizasyon
+
+    # Ekran boyutuna dönüştür
+    x_screen = x_norm * SCREEN_WIDTH
+    y_screen = y_norm * SCREEN_HEIGHT
+
+    # Hareketi yumuşat
+    CLOX = PLOCX + (x_screen - PLOCX) / SMOOTH_FACTOR
+    CLOXY = PLOCY + (y_screen - PLOCY) / SMOOTH_FACTOR
+
+    # Fareyi hareket ettir
+    pyautogui.moveTo(CLOX, CLOXY)
+    PLOCX, PLOCY = CLOX, CLOXY
 
 LAST_GESTURE_TIME = 0
 GESTURE_DELAY = 1.0  # 1 saniye tampon süresi
+
+def calc_landmark_coordinates(frame_rgb, hand_landmarks):
+    """
+    Mediapipe'den dönen el işaretlerini (landmarks) çerçeve boyutuna göre 
+    piksel koordinatlarına dönüştürür.
+    """
+    h, w, _ = frame_rgb.shape
+    coordinates = [(int(landmark.x * w), int(landmark.y * h)) for landmark in hand_landmarks.landmark]
+    return coordinates
 
 def handle_gesture(driver, gesture):
     global LAST_GESTURE_TIME
 
     current_time = time.time()  # Geçerli zaman
-    # Eğer son hareketle geçen süre tampon süresinden kısa ise, işlem yapılmaz
+
+    # Move_mouse jesti için zaman kontrolü yapılmaz
+    if gesture == 'Move_mouse':
+        try:
+            move_mouse_with_coordinates(frame_rgb)
+        except Exception as e:
+            print(f"'Move_mouse' jestinde hata: {e}")
+        return
+
+    # Diğer jestler için zaman kontrolü yapılır
     if current_time - LAST_GESTURE_TIME < GESTURE_DELAY:
         return  # Harekete izin verilmez
 
     LAST_GESTURE_TIME = current_time  # Son hareketin zamanını güncelle
-    volume_sensitivity=0.05
+    volume_sensitivity = 0.05
+
     try:
         if gesture == "Play_Pause":
             # Oynat/Duraklat işlemi
             driver.find_element("css selector", "button.ytp-play-button").click()
         elif gesture == "Vol_up_ytb":
             # Increase volume
-           driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
+            driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
         elif gesture == "Vol_down_ytb":
             # Decrease volume
             driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
+        elif gesture == "Vol_up_gen":
+            # Increase system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(min(1.0, current_volume + volume_sensitivity), None)
+        elif gesture == "Vol_down_gen":
+            # Decrease system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(max(0.0, current_volume - volume_sensitivity), None)
         elif gesture == "fullscreen":
             # Tam ekran geçişi yap
             driver.find_element("css selector", "button.ytp-fullscreen-button").click()
@@ -223,13 +302,18 @@ def handle_gesture(driver, gesture):
         elif gesture == "Backward":
             # Videoyu geri sar
             driver.execute_script("document.querySelector('video').currentTime -= 10")
-        #elif gesture == "Cap_Subt":
+        elif gesture == "Cap_Subt":
             # Altyazıları aç/kapat
-           # driver.find_element("css selector", "button.ytp-subtitles-button").click()
+            driver.find_element("css selector", "button.ytp-subtitles-button").click()
+        elif gesture == 'Right_click':
+            pyautogui.rightClick()
+        elif gesture == 'Left_click':
+            pyautogui.click()
         else:
             print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
     except Exception as e:
         print(f"Gesture işleminde hata: {e}")
+
 
 
 if __name__ == "__main__":
