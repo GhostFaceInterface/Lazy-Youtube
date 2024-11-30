@@ -4,6 +4,10 @@ import numpy as np
 import torch
 import pandas as pd
 import cv2 as cv
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from pynput.mouse import Controller, Button
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
@@ -69,7 +73,7 @@ def configure_chrome_options():
     if system_platform == 'Darwin':  # macOS
         options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
     elif system_platform == 'Windows':  # Windows
-        options.binary_location = "C:\\Users\\alibu\\Downloads\\chrome-win64\\chrome-win64\\chrome.exe"
+        options.binary_location = "C:\\Users\\zahit\\Downloads\\chrome-win64\\chrome-win64\\chrome.exe"
     else:
         print("Bu sistem desteklenmiyor.")
         exit()
@@ -214,6 +218,20 @@ def handle_gesture(driver, gesture):
         elif gesture == "Vol_down_ytb":
             # Decrease volume
             driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
+        elif gesture == "Vol_up_gen":
+            # Increase system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(min(1.0, current_volume + volume_sensitivity), None)
+        elif gesture == "Vol_down_gen":
+            # Decrease system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(max(0.0, current_volume - volume_sensitivity), None)
         elif gesture == "fullscreen":
             # Tam ekran geçişi yap
             driver.find_element("css selector", "button.ytp-fullscreen-button").click()
@@ -223,9 +241,9 @@ def handle_gesture(driver, gesture):
         elif gesture == "Backward":
             # Videoyu geri sar
             driver.execute_script("document.querySelector('video').currentTime -= 10")
-        #elif gesture == "Cap_Subt":
+        elif gesture == "Cap_Subt":
             # Altyazıları aç/kapat
-           # driver.find_element("css selector", "button.ytp-subtitles-button").click()
+            driver.find_element("css selector", "button.ytp-subtitles-button").click()
         else:
             print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
     except Exception as e:
