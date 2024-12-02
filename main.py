@@ -1,267 +1,320 @@
 from collections import deque
 import mediapipe as mp
 import numpy as np
-import pyautogui
 import torch
-import time
-import platform
-import json
-import dlib
 import pandas as pd
+import cv2 as cv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-import undetected_chromedriver as uc
-
+from selenium.webdriver.common.keys import Keys
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from pynput.mouse import Controller, Button
+# Model and utility imports
 from models.model_architecture import model
 from utils import *
-from imutils import face_utils
-
-# Mediapipe ve OpenCV ile el hareketlerini algılama
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-
-# WebDriver ayarları (Brave kontrolü için)
-# BU ALANI DEĞİŞTİRMEYİN
-options = webdriver.ChromeOptions()
-options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-
-# Sisteme göre Brave tarayıcısının yolunu belirleyin
-system_platform = platform.system()
-
-# JSON dosyasını yükleyin
-with open('config.json', 'r') as config_file:
-    config = json.load(config_file)
-
-try:
-    if system_platform == 'Darwin':
-        driver = uc.Chrome(options=options)
-    elif system_platform == 'Windows':
-        driver = uc.Chrome(service=Service(config['chromedriver_path']), options=options)
-    else:
-        print('Bu sistem desteklenmiyor.')
-        exit()
-    print('Brave tarayıcısı başarıyla başlatıldı.')
-except Exception as e:
-    print(f'Tarayıcı başlatılamadı: {e}')
-    exit()
-
-def setup_browser():
-    try:
-        driver.get('https://www.youtube.com')
-        time.sleep(5)  # Sayfa yüklenirken beklemek için
-        print('YouTube başarıyla açıldı.')
-    except Exception as e:
-        print(f'YouTube açılamadı: {e}')
-        exit()
-# --------------------------------------------BURAYA KADAR DEĞİŞTİRMEYİN--------------------------------------------
-
-
-#Asıl iş burada başlıyor
-
-mode = 0
+import time
+# Global constants and configurations
+WIDTH, HEIGHT = 1028, 720
 CSV_PATH = 'data/gestures.csv'
-
-# Camera settings
-WIDTH = 1028//2
-HEIGHT = 720//2
-
-cap = cv.VideoCapture(0)
-cap.set(cv.CAP_PROP_FRAME_WIDTH, WIDTH)
-cap.set(cv.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-
-
-# important keypoints (wrist + tips coordinates)
-# for training the model
-TRAINING_KEYPOINTS = [keypoint for keypoint in range(0, 21, 4)]
-
-
-# Mouse mouvement stabilization
-SMOOTH_FACTOR = 6
-PLOCX, PLOCY = 0, 0 # previous x, y locations
-CLOX, CLOXY = 0, 0 # current x, y locations
-
-# Hand detector
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    max_num_hands=1,
-    min_detection_confidence=0.75)
-
-# Hand landmarks drawing
-mp_drawing = mp.solutions.drawing_utils
-
-# Load saved model for hand gesture recognition
 GESTURE_RECOGNIZER_PATH = 'models/model.pth'
-model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
-
-# Load Label
 LABEL_PATH = 'data/label.csv'
-labels = pd.read_csv(LABEL_PATH, header=None).values.flatten().tolist()
-
-# confidence threshold(required to translate gestures into commands)
 CONF_THRESH = 0.9
-
-# history to track the n last detected commands
-GESTURE_HISTORY = deque([])
-
-# general counter (for volum up/down; forward/backward)
-GEN_COUNTER = 0
-
-# Face detection (absence feature)
-mp_face_detection = mp.solutions.face_detection
-
-face_detection = mp_face_detection.FaceDetection(
-    model_selection=0, min_detection_confidence=0.75)
-
-IS_ABSENT = None # only for testing purposes...change this by video status (paused or playing)
-ABSENCE_COUNTER = 0
+TRAINING_KEYPOINTS = [keypoint for keypoint in range(0, 21, 4)]
+SMOOTH_FACTOR = 6
 ABSENCE_COUNTER_THRESH = 20
 
-# Frontal face + face landmarks (sleepness feature)
-SHAPE_PREDICTOR_PATH = "models/shape_predictor_68_face_landmarks.dat"
-detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor(SHAPE_PREDICTOR_PATH)
-lStart, lEnd = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
-rStart, rEnd = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
+# State variables
+PLOCX, PLOCY = 0, 0
+CLOX, CLOXY = 0, 0
+GEN_COUNTER = 0
+GESTURE_HISTORY = deque([])
+ABSENCE_COUNTER = 0
+IS_ABSENT = None  # Placeholder for video status
+
+# Initialize Mediapipe and other components
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.75)
+mp_drawing = mp.solutions.drawing_utils
+mp_face_detection = mp.solutions.face_detection
+face_detection = mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.75)
+
+##################################################BU KISIM TARAYICI AYARLARIDIR###############################
+import platform
+import json
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+
+def load_config(file_path):
+    """
+    JSON dosyasını yükler ve içeriğini döndürür.
+    """
+    try:
+        with open(file_path, 'r') as config_file:
+            config = json.load(config_file)
+        print("Config dosyası başarıyla yüklendi.")
+        return config
+    except FileNotFoundError:
+        print(f"Hata: {file_path} dosyası bulunamadı.")
+        exit()
+    except json.JSONDecodeError as e:
+        print(f"JSON dosyası yüklenirken hata oluştu: {e}")
+        exit()
+
+def configure_chrome_options():
+    """
+    İşletim sistemine göre Chrome tarayıcı seçeneklerini yapılandırır.
+    """
+    system_platform = platform.system()
+    options = webdriver.ChromeOptions()
+
+    if system_platform == 'Darwin':  # macOS
+        options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    elif system_platform == 'Windows':  # Windows
+        options.binary_location = "C:\\Users\\alibu\\Downloads\\chrome-win64\\chrome-win64\\chrome.exe"
+    else:
+        print("Bu sistem desteklenmiyor.")
+        exit()
+
+    print(f"{system_platform} için Chrome seçenekleri başarıyla yapılandırıldı.")
+    return options
+
+def start_browser(config, options):
+    """
+    WebDriver hizmetini başlatır ve Chrome tarayıcısını döndürür.
+    """
+    try:
+        service = Service(config['chromedriver_path'])  # Chromedriver yolunu config.json'dan alıyoruz
+        driver = webdriver.Chrome(service=service, options=options)  
+        print('Google Chrome başarıyla başlatıldı.')
+        return driver
+    except Exception as e:
+        print(f'Tarayıcı başlatılamadı: {e}')
+        exit()
+
+def open_url(driver, url):
+    """
+    Verilen URL'yi açar.
+    """
+    try:
+        driver.get(url)
+        time.sleep(5)  # Sayfa yüklenirken beklemek için
+        print(f'{url} başarıyla açıldı.')
+    except Exception as e:
+        print(f'{url} açılamadı: {e}')
+        exit()
 
 
-IS_SLEEPING = None # only for testing purposes...change this by video status (paused or playing)
-SLEEP_COUNTER = 0
-SLEEP_COUNTER_THRESH = 20
-EAR_THRESH = 0.21 
-EAR_HISTORY = deque([])
+##############################################################################################################
+# Load the model and labels
+def load_model_and_labels():
+    model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
+    labels = pd.read_csv(LABEL_PATH, header=None).values.flatten().tolist()
+    return labels
 
+labels = load_model_and_labels()
 
-while True:
-    key = cv.waitKey(1) 
-    if key == ord('q'):
-        break
+# Setup video capture
+def setup_camera():
+    cap = cv.VideoCapture(0)
+    cap.set(cv.CAP_PROP_FRAME_WIDTH, WIDTH)
+    cap.set(cv.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+    return cap
 
-    
-    # choose mode (normal or recording)
-    mode = select_mode(key, mode=mode)
-
-    # class id for recording
-    class_id = get_class_id(key)
-
-    # read camera
-    has_frame, frame = cap.read()
-    if not has_frame:
-        break
-
-    # horizontal flip and color conversion for mediapipe
-    frame = cv.flip(frame, 1)
-    frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-
-    # Detection and mouse zones
-    det_zone, m_zone = det_mouse_zones(frame)
-
-
-
+# Process hand landmarks
+def process_hand_landmarks(frame_rgb, frame, mode, class_id,driver):
     results = hands.process(frame_rgb)
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
-
-            # draw landmarks
-            mp_drawing.draw_landmarks(
-                frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-
-            # get landmarks coordinates
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
             coordinates_list = calc_landmark_coordinates(frame_rgb, hand_landmarks)
             important_points = [coordinates_list[i] for i in TRAINING_KEYPOINTS]
 
-
-            # Conversion to relative coordinates and normalized coordinates
             preprocessed = pre_process_landmark(important_points)
-            
-            # compute the needed distances to add to coordinate features
             d0 = calc_distance(coordinates_list[0], coordinates_list[5])
             pts_for_distances = [coordinates_list[i] for i in [4, 8, 12]]
-            distances = normalize_distances(d0, get_all_distances(pts_for_distances)) 
-            
+            distances = normalize_distances(d0, get_all_distances(pts_for_distances))
 
-            # Write to the csv file "keypoint.csv"(if mode == 1)
-            # logging_csv(class_id, mode, preprocessed)
             features = np.concatenate([preprocessed, distances])
             draw_info(frame, mode, class_id)
             logging_csv(class_id, mode, features, CSV_PATH)
 
-            
-            # inference
             conf, pred = predict(features, model)
             gesture = labels[pred]
+            if conf > CONF_THRESH:
+                handle_gesture(driver, gesture)
+                cv.putText(frame, f"Gesture: {gesture} ({conf:.2f})",
+                           (10, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-####################################################### YOUTUBE PLAYER CONTROL ###########################################################                       
-                
-            # check if middle finger mcp is inside the detection zone and prediction confidence is higher than a given threshold
-            if cv.pointPolygonTest(det_zone, coordinates_list[9], False) == 1 and conf >= CONF_THRESH: 
+# Display and update the frame
+def display_frame(cap,driver,mode):
+    global frame
+    global frame_rgb 
+    while True:
+        
+        key = cv.waitKey(1)
+        if key == ord('q'):
+            break
 
-                # track command history
-                gest_hist = track_history(GESTURE_HISTORY, gesture)
+        mode = select_mode(key, mode=mode)
+        class_id = get_class_id(key)
+        has_frame, frame = cap.read()
+        if not has_frame:
+            break
+        
+        
+        frame = cv.flip(frame, 1)
+        frame_rgb= cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        process_hand_landmarks(frame_rgb, frame, mode, class_id, driver)
+        cv.imshow("Hand Gesture Recognition", frame)
 
-                if len(gest_hist) >= 2:
-                    before_last = gest_hist[len(gest_hist) - 2]
-                else:
-                    before_last = gest_hist[0]
+# Main function
+def main():
+    # Tarayıcı ayarları ve YouTube açılışı
+    try:
+        print("Tarayıcı ayarları başlatılıyor...")
+        config_path = 'config.json'
+        config = load_config(config_path)
+        options = configure_chrome_options()
+        driver = start_browser(config, options)
+        open_url(driver, 'https://www.youtube.com')
+    except Exception as e:
+        print(f"Tarayıcı işlemleri sırasında hata oluştu: {e}")
+    
+    # Kamera kurulumu ve video işleme
+    try:
+        print("Kamera kurulumu başlatılıyor...")
+        cap = setup_camera()
+        print("Video akışı başlatılıyor...")
+        display_frame(cap,driver,mode=0)
+    except Exception as e:
+        print(f"Kamera veya video işleme sırasında hata oluştu: {e}")
+    finally:
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        cv.destroyAllWindows()
+        print("Tüm işlemler tamamlandı ve kaynaklar serbest bırakıldı.")
 
-            ############### mouse gestures ##################
-                if gesture == 'Move_mouse':
-                    x, y = mouse_zone_to_screen(coordinates_list[9], m_zone)
-                    
-                    # smoothe mouse movements
-                    CLOX = PLOCX + (x - PLOCX) / SMOOTH_FACTOR
-                    CLOXY = PLOCY + (y - PLOCY) / SMOOTH_FACTOR
-                    pyautogui.moveTo(CLOX, CLOXY)
-                    PLOCX, PLOCY = CLOX, CLOXY
+########################################Youtube Kontrol########################################################################
+import pyautogui
 
-                if gesture == 'Right_click' and before_last != 'Right_click':
-                    pyautogui.rightClick()
+# Ekran boyutunu al
+SCREEN_WIDTH, SCREEN_HEIGHT = pyautogui.size()
 
-                if gesture == 'Left_click' and before_last != 'Left_click':
-                    pyautogui.click()   
+def move_mouse_with_coordinates(frame_rgb):
+    global PLOCX, PLOCY
+    results = hands.process(frame_rgb)
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            coordinates_list = calc_landmark_coordinates(frame_rgb, hand_landmarks)
+            important_points = [coordinates_list[i] for i in TRAINING_KEYPOINTS]
+
+            preprocessed = pre_process_landmark(important_points)
+            d0 = calc_distance(coordinates_list[0], coordinates_list[5])
+            pts_for_distances = [coordinates_list[i] for i in [4, 8, 12]]
+            distances = normalize_distances(d0, get_all_distances(pts_for_distances))
+
+            features = np.concatenate([preprocessed, distances])
+       
+    # El koordinatlarını hesapla
+
+    # Orta parmak ucu için normalize edilmiş koordinatları al
+    x_norm, y_norm = coordinates_list[9]  # Orta parmak ucu
+    x_norm, y_norm = x_norm / WIDTH, y_norm / HEIGHT  # Çerçeveye göre normalizasyon
+
+    # Ekran boyutuna dönüştür
+    x_screen = x_norm * SCREEN_WIDTH
+    y_screen = y_norm * SCREEN_HEIGHT
+
+    # Hareketi yumuşat
+    CLOX = PLOCX + (x_screen - PLOCX) / SMOOTH_FACTOR
+    CLOXY = PLOCY + (y_screen - PLOCY) / SMOOTH_FACTOR
+
+    # Fareyi hareket ettir
+    pyautogui.moveTo(CLOX, CLOXY)
+    PLOCX, PLOCY = CLOX, CLOXY
+
+LAST_GESTURE_TIME = 0
+GESTURE_DELAY = 1.0  # 1 saniye tampon süresi
+
+def calc_landmark_coordinates(frame_rgb, hand_landmarks):
+    """
+    Mediapipe'den dönen el işaretlerini (landmarks) çerçeve boyutuna göre 
+    piksel koordinatlarına dönüştürür.
+    """
+    h, w, _ = frame_rgb.shape
+    coordinates = [(int(landmark.x * w), int(landmark.y * h)) for landmark in hand_landmarks.landmark]
+    return coordinates
+
+def handle_gesture(driver, gesture):
+    global LAST_GESTURE_TIME
+
+    current_time = time.time()  # Geçerli zaman
+
+    # Move_mouse jesti için zaman kontrolü yapılmaz
+    if gesture == 'Move_mouse':
+        try:
+            move_mouse_with_coordinates(frame_rgb)
+        except Exception as e:
+            print(f"'Move_mouse' jestinde hata: {e}")
+        return
+
+    # Diğer jestler için zaman kontrolü yapılır
+    if current_time - LAST_GESTURE_TIME < GESTURE_DELAY:
+        return  # Harekete izin verilmez
+
+    LAST_GESTURE_TIME = current_time  # Son hareketin zamanını güncelle
+    volume_sensitivity = 0.05
+
+    try:
+        if gesture == "Play_Pause":
+            # Oynat/Duraklat işlemi
+            driver.find_element("css selector", "button.ytp-play-button").click()
+        elif gesture == "Vol_up_ytb":
+            # Increase volume
+            driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
+        elif gesture == "Vol_down_ytb":
+            # Decrease volume
+            driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
+        elif gesture == "Vol_up_gen":
+            # Increase system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(min(1.0, current_volume + volume_sensitivity), None)
+        elif gesture == "Vol_down_gen":
+            # Decrease system volume
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+            volume.SetMasterVolumeLevelScalar(max(0.0, current_volume - volume_sensitivity), None)
+        elif gesture == "fullscreen":
+            # Tam ekran geçişi yap
+            driver.find_element("css selector", "button.ytp-fullscreen-button").click()
+        elif gesture == "Forward":
+            # Videoyu ileri sar
+            driver.execute_script("document.querySelector('video').currentTime += 10")
+        elif gesture == "Backward":
+            # Videoyu geri sar
+            driver.execute_script("document.querySelector('video').currentTime -= 10")
+        elif gesture == "Cap_Subt":
+            # Altyazıları aç/kapat
+            driver.find_element("css selector", "button.ytp-subtitles-button").click()
+        elif gesture == 'Right_click':
+            pyautogui.rightClick()
+        elif gesture == 'Left_click':
+            pyautogui.click()
+        else:
+            print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
+    except Exception as e:
+        print(f"Gesture işleminde hata: {e}")
 
 
-            ############### Other gestures ################## 
-                if gesture == 'Play_Pause' and before_last != 'Play_Pause':
-                    pyautogui.press('space')
-                
-                elif gesture == 'Vol_up_gen':
-                    pyautogui.press('volumeup')
 
-                elif gesture == 'Vol_down_gen':
-                    pyautogui.press('volumedown')
-
-                elif gesture == 'Vol_up_ytb':
-                    GEN_COUNTER += 1
-                    if GEN_COUNTER % 4 == 0:
-                        pyautogui.press('up')
-
-                elif gesture == 'Vol_down_ytb':
-                    GEN_COUNTER += 1
-                    if GEN_COUNTER % 4 == 0:
-                        pyautogui.press('down')
-
-                elif gesture == 'Forward':
-                    GEN_COUNTER += 1
-                    if GEN_COUNTER % 4 == 0:
-                        pyautogui.press('right')
-                
-                elif gesture == 'Backward':
-                    GEN_COUNTER += 1
-                    if GEN_COUNTER % 4 == 0:
-                        pyautogui.press('left')
-                
-                elif gesture == 'fullscreen' and before_last != 'fullscreen':
-                    pyautogui.press('f')
-                
-                elif gesture == 'Cap_Subt' and before_last != 'Cap_Subt':
-                    pyautogui.press('c')
-
-                elif gesture == 'Neutral':
-                    GEN_COUNTER = 0 
-
-                # show detected gesture
-                cv.putText(frame, f'{gesture} | {conf: .2f}', (int(WIDTH*0.05), int(HEIGHT*0.07)),
-                    cv.FONT_HERSHEY_COMPLEX, 0.8, (0, 0, 255), 1, cv.LINE_AA)
-
-cap.release()
-cv.destroyAllWindows()                
+if __name__ == "__main__":
+    main()
