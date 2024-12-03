@@ -1,3 +1,15 @@
+import platform
+import os
+
+# İşletim sistemi kontrolü
+system_platform = platform.system()
+
+if system_platform == "Windows":
+    from ctypes import cast, POINTER
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+# Ortak kütüphaneler
 from collections import deque
 import mediapipe as mp
 import numpy as np
@@ -7,14 +19,12 @@ import cv2 as cv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from pynput.mouse import Controller, Button
-# Model and utility imports
+import pyautogui
+import time
+
 from models.model_architecture import model
 from utils import *
-import time
+
 # Global constants and configurations
 WIDTH, HEIGHT = 1028, 720
 CSV_PATH = 'data/gestures.csv'
@@ -40,8 +50,7 @@ mp_drawing = mp.solutions.drawing_utils
 mp_face_detection = mp.solutions.face_detection
 face_detection = mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.75)
 
-##################################################BU KISIM TARAYICI AYARLARIDIR###############################
-import platform
+################################################## BU KISIM TARAYICI AYARLARIDIR ###############################
 import json
 import time
 from selenium import webdriver
@@ -63,32 +72,40 @@ def load_config(file_path):
         print(f"JSON dosyası yüklenirken hata oluştu: {e}")
         exit()
 
-def configure_chrome_options():
+def get_browser_choice():
     """
-    İşletim sistemine göre Chrome tarayıcı seçeneklerini yapılandırır.
+    Kullanıcıdan tarayıcı seçimi alır.
     """
-    system_platform = platform.system()
-    options = webdriver.ChromeOptions()
-
-    if system_platform == 'Darwin':  # macOS
-        options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    elif system_platform == 'Windows':  # Windows
-        options.binary_location = "C:\\Users\\alibu\\Downloads\\chrome-win64\\chrome-win64\\chrome.exe"
+    print("Kullanmak istediğiniz tarayıcıyı seçin:\n1 - Chrome\n2 - Brave")
+    choice = input("Seçiminiz: ")
+    if choice == "1":
+        return "chrome"
+    elif choice == "2":
+        return "brave"
     else:
-        print("Bu sistem desteklenmiyor.")
+        print("Geçersiz seçim. Program sonlandırılıyor.")
         exit()
 
-    print(f"{system_platform} için Chrome seçenekleri başarıyla yapılandırıldı.")
-    return options
+def start_browser(config, browser_choice):
+    """
+    Seçilen tarayıcıyı başlatır.
+    """
+    options = webdriver.ChromeOptions()
+    if browser_choice == "chrome":
+        if not config['chrome_path']:
+            print("Chrome path config.json'da belirtilmemiş.")
+            exit()
+        options.binary_location = config['chrome_path']
+    elif browser_choice == "brave":
+        if not config['brave_browser_path']:
+            print("Brave path config.json'da belirtilmemiş.")
+            exit()
+        options.binary_location = config['brave_browser_path']
 
-def start_browser(config, options):
-    """
-    WebDriver hizmetini başlatır ve Chrome tarayıcısını döndürür.
-    """
     try:
         service = Service(config['chromedriver_path'])  # Chromedriver yolunu config.json'dan alıyoruz
-        driver = webdriver.Chrome(service=service, options=options)  
-        print('Google Chrome başarıyla başlatıldı.')
+        driver = webdriver.Chrome(service=service, options=options)
+        print(f'{browser_choice.capitalize()} başarıyla başlatıldı.')
         return driver
     except Exception as e:
         print(f'Tarayıcı başlatılamadı: {e}')
@@ -106,8 +123,36 @@ def open_url(driver, url):
         print(f'{url} açılamadı: {e}')
         exit()
 
-
 ##############################################################################################################
+
+def handle_volume(gesture, volume_sensitivity=0.05):
+    """
+    Ses kontrolü işlemleri için platforma göre davranış.
+    """
+    if system_platform == "Windows":
+        try:
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            current_volume = volume.GetMasterVolumeLevelScalar()
+
+            if gesture == "Vol_up_gen":
+                volume.SetMasterVolumeLevelScalar(min(1.0, current_volume + volume_sensitivity), None)
+            elif gesture == "Vol_down_gen":
+                volume.SetMasterVolumeLevelScalar(max(0.0, current_volume - volume_sensitivity), None)
+        except Exception as e:
+            print(f"Windows ses kontrolünde hata: {e}")
+    elif system_platform == "Darwin":  # MacOS
+        try:
+            if gesture == "Vol_up_gen":
+                os.system("osascript -e 'set volume output volume ((output volume of (get volume settings)) + 5)'")
+            elif gesture == "Vol_down_gen":
+                os.system("osascript -e 'set volume output volume ((output volume of (get volume settings)) - 5)'")
+        except Exception as e:
+            print(f"MacOS ses kontrolünde hata: {e}")
+    else:
+        print(f"{system_platform} platformu için ses kontrolü desteklenmiyor.")
+
 # Load the model and labels
 def load_model_and_labels():
     model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
@@ -124,7 +169,7 @@ def setup_camera():
     return cap
 
 # Process hand landmarks
-def process_hand_landmarks(frame_rgb, frame, mode, class_id,driver):
+def process_hand_landmarks(frame_rgb, frame, mode, class_id, driver):
     results = hands.process(frame_rgb)
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
@@ -149,11 +194,11 @@ def process_hand_landmarks(frame_rgb, frame, mode, class_id,driver):
                            (10, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
 # Display and update the frame
-def display_frame(cap,driver,mode):
+def display_frame(cap, driver, mode):
     global frame
-    global frame_rgb 
+    global frame_rgb
     while True:
-        
+
         key = cv.waitKey(1)
         if key == ord('q'):
             break
@@ -163,10 +208,9 @@ def display_frame(cap,driver,mode):
         has_frame, frame = cap.read()
         if not has_frame:
             break
-        
-        
+
         frame = cv.flip(frame, 1)
-        frame_rgb= cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         process_hand_landmarks(frame_rgb, frame, mode, class_id, driver)
         cv.imshow("Hand Gesture Recognition", frame)
 
@@ -176,19 +220,21 @@ def main():
     try:
         print("Tarayıcı ayarları başlatılıyor...")
         config_path = 'config.json'
-        config = load_config(config_path)
-        options = configure_chrome_options()
-        driver = start_browser(config, options)
-        open_url(driver, 'https://www.youtube.com')
+        config = load_config(config_path)  # Config dosyasını yükle
+        browser_choice = get_browser_choice()  # Tarayıcı seçimini al
+        driver = start_browser(config, browser_choice)  # Seçilen tarayıcıyı başlat
+        open_url(driver, 'https://www.youtube.com')  # YouTube'u aç
+
     except Exception as e:
         print(f"Tarayıcı işlemleri sırasında hata oluştu: {e}")
-    
+        driver = None  # Driver başlatılamadıysa None yap
+
     # Kamera kurulumu ve video işleme
     try:
         print("Kamera kurulumu başlatılıyor...")
         cap = setup_camera()
         print("Video akışı başlatılıyor...")
-        display_frame(cap,driver,mode=0)
+        display_frame(cap, driver, mode=0)
     except Exception as e:
         print(f"Kamera veya video işleme sırasında hata oluştu: {e}")
     finally:
@@ -197,8 +243,7 @@ def main():
         cv.destroyAllWindows()
         print("Tüm işlemler tamamlandı ve kaynaklar serbest bırakıldı.")
 
-########################################Youtube Kontrol########################################################################
-import pyautogui
+######################################## YouTube Kontrol ###############################################################
 
 # Ekran boyutunu al
 SCREEN_WIDTH, SCREEN_HEIGHT = pyautogui.size()
@@ -218,24 +263,22 @@ def move_mouse_with_coordinates(frame_rgb):
             distances = normalize_distances(d0, get_all_distances(pts_for_distances))
 
             features = np.concatenate([preprocessed, distances])
-       
-    # El koordinatlarını hesapla
 
-    # Orta parmak ucu için normalize edilmiş koordinatları al
-    x_norm, y_norm = coordinates_list[9]  # Orta parmak ucu
-    x_norm, y_norm = x_norm / WIDTH, y_norm / HEIGHT  # Çerçeveye göre normalizasyon
+            # Orta parmak ucu için normalize edilmiş koordinatları al
+            x_norm, y_norm = coordinates_list[9]  # Orta parmak ucu
+            x_norm, y_norm = x_norm / WIDTH, y_norm / HEIGHT  # Çerçeveye göre normalizasyon
 
-    # Ekran boyutuna dönüştür
-    x_screen = x_norm * SCREEN_WIDTH
-    y_screen = y_norm * SCREEN_HEIGHT
+            # Ekran boyutuna dönüştür
+            x_screen = x_norm * SCREEN_WIDTH
+            y_screen = y_norm * SCREEN_HEIGHT
 
-    # Hareketi yumuşat
-    CLOX = PLOCX + (x_screen - PLOCX) / SMOOTH_FACTOR
-    CLOXY = PLOCY + (y_screen - PLOCY) / SMOOTH_FACTOR
+            # Hareketi yumuşat
+            CLOX = PLOCX + (x_screen - PLOCX) / SMOOTH_FACTOR
+            CLOXY = PLOCY + (y_screen - PLOCY) / SMOOTH_FACTOR
 
-    # Fareyi hareket ettir
-    pyautogui.moveTo(CLOX, CLOXY)
-    PLOCX, PLOCY = CLOX, CLOXY
+            # Fareyi hareket ettir
+            pyautogui.moveTo(CLOX, CLOXY)
+            PLOCX, PLOCY = CLOX, CLOXY
 
 LAST_GESTURE_TIME = 0
 GESTURE_DELAY = 1.0  # 1 saniye tampon süresi
@@ -251,6 +294,7 @@ def calc_landmark_coordinates(frame_rgb, hand_landmarks):
 
 def handle_gesture(driver, gesture):
     global LAST_GESTURE_TIME
+    global frame_rgb
 
     current_time = time.time()  # Geçerli zaman
 
@@ -274,25 +318,18 @@ def handle_gesture(driver, gesture):
             # Oynat/Duraklat işlemi
             driver.find_element("css selector", "button.ytp-play-button").click()
         elif gesture == "Vol_up_ytb":
-            # Increase volume
-            driver.execute_script(f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})")
+            # YouTube sesini artır
+            driver.execute_script(
+                f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})"
+            )
         elif gesture == "Vol_down_ytb":
-            # Decrease volume
-            driver.execute_script(f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})")
-        elif gesture == "Vol_up_gen":
-            # Increase system volume
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            current_volume = volume.GetMasterVolumeLevelScalar()
-            volume.SetMasterVolumeLevelScalar(min(1.0, current_volume + volume_sensitivity), None)
-        elif gesture == "Vol_down_gen":
-            # Decrease system volume
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            current_volume = volume.GetMasterVolumeLevelScalar()
-            volume.SetMasterVolumeLevelScalar(max(0.0, current_volume - volume_sensitivity), None)
+            # YouTube sesini azalt
+            driver.execute_script(
+                f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})"
+            )
+        elif gesture in ["Vol_up_gen", "Vol_down_gen"]:
+            # Genel ses kontrolü
+            handle_volume(gesture, volume_sensitivity)
         elif gesture == "fullscreen":
             # Tam ekran geçişi yap
             driver.find_element("css selector", "button.ytp-fullscreen-button").click()
@@ -313,8 +350,6 @@ def handle_gesture(driver, gesture):
             print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
     except Exception as e:
         print(f"Gesture işleminde hata: {e}")
-
-
 
 if __name__ == "__main__":
     main()

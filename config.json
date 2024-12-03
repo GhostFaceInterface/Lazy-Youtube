@@ -1,5 +1,6 @@
 {
     "brave_browser_path": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-    "chromedriver_path": "C:\\Program Files\\chromedriver-win64\\chromedriver-win64\\chromedriver.exe"
+    "chrome_path": "",
+    "chromedriver_path": "/opt/homebrew/bin/chromedriver"
   }
   
