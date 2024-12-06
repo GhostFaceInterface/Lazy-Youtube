@@ -26,7 +26,7 @@ from models.model_architecture import model
 from utils import *
 
 # Global constants and configurations
-WIDTH, HEIGHT = 1028, 720
+WIDTH, HEIGHT = 1080, 1080
 CSV_PATH = 'data/gestures.csv'
 GESTURE_RECOGNIZER_PATH = 'models/model.pth'
 LABEL_PATH = 'data/label.csv'
@@ -145,14 +145,13 @@ def handle_volume(gesture, volume_sensitivity=0.05):
     elif system_platform == "Darwin":  # MacOS
         try:
             if gesture == "Vol_up_gen":
-                os.system("osascript -e 'set volume output volume ((output volume of (get volume settings)) + 5)'")
+                os.system("osascript -e 'set volume output volume ((output volume of (get volume settings)) + 15)'")
             elif gesture == "Vol_down_gen":
                 os.system("osascript -e 'set volume output volume ((output volume of (get volume settings)) - 5)'")
         except Exception as e:
             print(f"MacOS ses kontrolünde hata: {e}")
     else:
         print(f"{system_platform} platformu için ses kontrolü desteklenmiyor.")
-
 # Load the model and labels
 def load_model_and_labels():
     model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
@@ -319,14 +318,14 @@ def handle_gesture(driver, gesture):
             driver.find_element("css selector", "button.ytp-play-button").click()
         elif gesture == "Vol_up_ytb":
             # YouTube sesini artır
-            driver.execute_script(
-                f"document.querySelector('video').volume = Math.min(1, document.querySelector('video').volume + {volume_sensitivity})"
-            )
+           pyautogui.press("up")
+           print("YouTube ses artırma işlemi tetiklendi (yukarı ok tuşu).")
+
         elif gesture == "Vol_down_ytb":
-            # YouTube sesini azalt
-            driver.execute_script(
-                f"document.querySelector('video').volume = Math.max(0, document.querySelector('video').volume - {volume_sensitivity})"
-            )
+            # YouTube sesini azalt (YouTube'da "aşağı ok" sesi azaltır)
+            pyautogui.press("down")
+            print("YouTube ses azaltma işlemi tetiklendi (aşağı ok tuşu).")
+
         elif gesture in ["Vol_up_gen", "Vol_down_gen"]:
             # Genel ses kontrolü
             handle_volume(gesture, volume_sensitivity)
@@ -334,11 +333,14 @@ def handle_gesture(driver, gesture):
             # Tam ekran geçişi yap
             driver.find_element("css selector", "button.ytp-fullscreen-button").click()
         elif gesture == "Forward":
-            # Videoyu ileri sar
-            driver.execute_script("document.querySelector('video').currentTime += 10")
+                        # Videoyu ileri sar (YouTube'da "sağ ok" ileri sarar)
+            pyautogui.press("right")
+            print("Video ileri sarma işlemi tetiklendi (sağ ok tuşu).")
+
         elif gesture == "Backward":
-            # Videoyu geri sar
-            driver.execute_script("document.querySelector('video').currentTime -= 10")
+            # Videoyu geri sar (YouTube'da "sol ok" geri sarar)
+            pyautogui.press("left")
+            print("Video geri sarma işlemi tetiklendi (sol ok tuşu).")
         elif gesture == "Cap_Subt":
             # Altyazıları aç/kapat
             driver.find_element("css selector", "button.ytp-subtitles-button").click()
