@@ -207,9 +207,10 @@ def display_frame(cap, driver, mode):
         has_frame, frame = cap.read()
         if not has_frame:
             break
-
+        
+        
         frame = cv.flip(frame, 1)
-        frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        frame_rgb= cv.cvtColor(frame, cv.COLOR_BGR2RGB)
         process_hand_landmarks(frame_rgb, frame, mode, class_id, driver)
         cv.imshow("Hand Gesture Recognition", frame)
 
@@ -291,6 +292,15 @@ def calc_landmark_coordinates(frame_rgb, hand_landmarks):
     coordinates = [(int(landmark.x * w), int(landmark.y * h)) for landmark in hand_landmarks.landmark]
     return coordinates
 
+def calc_landmark_coordinates(frame_rgb, hand_landmarks):
+    """
+    Mediapipe'den dönen el işaretlerini (landmarks) çerçeve boyutuna göre 
+    piksel koordinatlarına dönüştürür.
+    """
+    h, w, _ = frame_rgb.shape
+    coordinates = [(int(landmark.x * w), int(landmark.y * h)) for landmark in hand_landmarks.landmark]
+    return coordinates
+
 def handle_gesture(driver, gesture):
     global LAST_GESTURE_TIME
     global frame_rgb
@@ -306,10 +316,22 @@ def handle_gesture(driver, gesture):
         return
 
     # Diğer jestler için zaman kontrolü yapılır
+
+    # Move_mouse jesti için zaman kontrolü yapılmaz
+    if gesture == 'Move_mouse':
+        try:
+            move_mouse_with_coordinates(frame_rgb)
+        except Exception as e:
+            print(f"'Move_mouse' jestinde hata: {e}")
+        return
+
+    # Diğer jestler için zaman kontrolü yapılır
     if current_time - LAST_GESTURE_TIME < GESTURE_DELAY:
         return  # Harekete izin verilmez
 
     LAST_GESTURE_TIME = current_time  # Son hareketin zamanını güncelle
+    volume_sensitivity = 0.05
+
     volume_sensitivity = 0.05
 
     try:
@@ -343,6 +365,11 @@ def handle_gesture(driver, gesture):
             print("Video geri sarma işlemi tetiklendi (sol ok tuşu).")
         elif gesture == "Cap_Subt":
             # Altyazıları aç/kapat
+            driver.find_element("css selector", "button.ytp-subtitles-button").click()
+        elif gesture == 'Right_click':
+            pyautogui.rightClick()
+        elif gesture == 'Left_click':
+            pyautogui.click()
             driver.find_element("css selector", "button.ytp-subtitles-button").click()
         elif gesture == 'Right_click':
             pyautogui.rightClick()
