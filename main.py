@@ -12,13 +12,13 @@ from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from pynput.mouse import Controller, Button
 # Model and utility imports
-from models.model_architecture import model
+from models.model_architecture import EnhancedNN
 from utils import *
 import time
 # Global constants and configurations
 WIDTH, HEIGHT = 1028, 720
 CSV_PATH = 'data/gestures.csv'
-GESTURE_RECOGNIZER_PATH = 'models/model.pth'
+GESTURE_RECOGNIZER_PATH = 'models/model1.pth'
 LABEL_PATH = 'data/label.csv'
 CONF_THRESH = 0.9
 TRAINING_KEYPOINTS = [keypoint for keypoint in range(0, 21, 4)]
@@ -106,11 +106,12 @@ def open_url(driver, url):
         print(f'{url} açılamadı: {e}')
         exit()
 
-
+model=EnhancedNN()
 ##############################################################################################################
 # Load the model and labels
 def load_model_and_labels():
     model.load_state_dict(torch.load(GESTURE_RECOGNIZER_PATH))
+    model.eval()
     labels = pd.read_csv(LABEL_PATH, header=None).values.flatten().tolist()
     return labels
 
@@ -313,7 +314,6 @@ def handle_gesture(driver, gesture):
             print(f"'{gesture}' için tanımlı bir işlem bulunamadı.")
     except Exception as e:
         print(f"Gesture işleminde hata: {e}")
-
 
 
 if __name__ == "__main__":
